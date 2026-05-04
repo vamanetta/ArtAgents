@@ -109,6 +109,8 @@ def run_executor(request: ExecutorRunRequest, registry: ExecutorRegistry | None 
 
 
 def _run_executor_inner(request: ExecutorRunRequest, executor: ExecutorDefinition) -> ExecutorRunResult:
+    if executor.metadata.get("agent_runtime") in {"inspect_run", "actions"}:
+        return _run_agent_runtime(executor, request)
     if executor.id == "upload.youtube":
         return _run_upload_youtube(request)
     values = _request_values(request)
@@ -137,6 +139,28 @@ def _run_executor_inner(request: ExecutorRunRequest, executor: ExecutorDefinitio
     if executor.kind == "built_in" and "pipeline_step" in executor.metadata:
         return _run_builtin_executor(executor, request)
     return _run_external_executor(executor, request, values)
+
+
+def _run_agent_runtime(executor: ExecutorDefinition, request: ExecutorRunRequest) -> ExecutorRunResult:
+    run_dir = Path(_required_input(request.inputs, "run_dir")).expanduser().resolve()
+    if request.dry_run:
+        return ExecutorRunResult(
+            executor_id=executor.id,
+            kind=executor.kind,
+            dry_run=True,
+            payload={"executor_id": executor.id, "would_inspect": str(run_dir)},
+        )
+
+    from artagents import agent_interface
+
+    runtime = executor.metadata.get("agent_runtime")
+    if runtime == "inspect_run":
+        payload = agent_interface.inspect_run(run_dir)
+    elif runtime == "actions":
+        payload = agent_interface.write_actions_to_manifest(run_dir)
+    else:
+        raise ExecutorRunnerError(f"unsupported agent runtime {runtime!r}")
+    return ExecutorRunResult(executor_id=executor.id, kind=executor.kind, payload=payload, returncode=0)
 
 
 def _run_upload_youtube(request: ExecutorRunRequest) -> ExecutorRunResult:

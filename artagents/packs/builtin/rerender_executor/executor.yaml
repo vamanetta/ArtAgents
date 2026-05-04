@@ -1,0 +1,32 @@
+{
+  "id": "builtin.rerender",
+  "name": "Rerender Run",
+  "kind": "built_in",
+  "version": "1.0",
+  "description": "Resume a run from cut/render using its run manifest inputs.",
+  "inputs": [
+    {
+      "name": "run_dir",
+      "type": "directory",
+      "description": "ArtAgents run directory containing run.json."
+    }
+  ],
+  "command": {
+    "argv": [
+      "{python_exec}",
+      "-m",
+      "artagents.packs.builtin.rerender_executor.run",
+      "{run_dir}"
+    ]
+  },
+  "cache": {
+    "mode": "none"
+  },
+  "isolation": {
+    "mode": "subprocess"
+  },
+  "metadata": {
+    "runtime_module": "artagents.rerender",
+    "runtime_file": "run.py"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "id": "builtin.apply_edits",
+  "name": "Apply Edits",
+  "kind": "built_in",
+  "version": "1.0",
+  "description": "Apply structured edit actions to a run arrangement and invalidate downstream artifacts.",
+  "inputs": [
+    {
+      "name": "run_dir",
+      "type": "directory",
+      "description": "ArtAgents run directory containing run.json and briefs/<slug>/arrangement.json."
+    },
+    {
+      "name": "edits",
+      "type": "path",
+      "description": "JSON file containing an array of structured edit actions."
+    }
+  ],
+  "command": {
+    "argv": [
+      "{python_exec}",
+      "-m",
+      "artagents.packs.builtin.apply_edits.run",
+      "{run_dir}",
+      "--edits",
+      "{edits}"
+    ]
+  },
+  "cache": {
+    "mode": "none"
+  },
+  "isolation": {
+    "mode": "subprocess"
+  },
+  "metadata": {
+    "runtime_module": "artagents.revise",
+    "runtime_file": "run.py"
+  }
+}

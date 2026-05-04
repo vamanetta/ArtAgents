@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from ....audit import AuditContext, PARENT_IDS_ENV
 from ..asset_cache import run as asset_cache
 from .... import timeline
+from .... import run_manifest
 from ...._paths import WORKSPACE_ROOT, executor_argv
 from ....core.project.run import (
     ProjectRunError,
@@ -1051,6 +1052,7 @@ def run_step(step: Step, cmd: list[str], args: argparse.Namespace) -> int:
     logs_dir = log_dir_for_step(step, args)
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{step.name}.log"
+    run_manifest.record_step(args.out, name=step.name, status="running", command=cmd_safe(cmd))
     with log_path.open("w", encoding="utf-8") as log_handle:
         env = os.environ.copy()
         if getattr(args, "audit", None) is not None:
@@ -1078,11 +1080,34 @@ def run_step(step: Step, cmd: list[str], args: argparse.Namespace) -> int:
         returncode = process.wait()
     if returncode != 0:
         print_log_tail(step.name, log_path)
+        run_manifest.record_step(
+            args.out,
+            name=step.name,
+            status="failed",
+            command=cmd_safe(cmd),
+            outputs=_step_manifest_outputs(step, args, log_path),
+            error=f"step exited with code {returncode}",
+        )
     elif getattr(args, "audit", None) is not None:
         output_ids = _register_step_outputs(step, cmd, args, log_path)
         if output_ids:
             args.audit_parent_ids = output_ids
+    if returncode == 0:
+        run_manifest.record_step(
+            args.out,
+            name=step.name,
+            status="completed",
+            command=cmd_safe(cmd),
+            outputs=_step_manifest_outputs(step, args, log_path),
+        )
     return returncode
+
+
+def _step_manifest_outputs(step: Step, args: argparse.Namespace, log_path: Path | None = None) -> dict[str, Path]:
+    outputs = {path.name: path for path in sentinel_paths(step, args)}
+    if log_path is not None:
+        outputs[f"{step.name}.log"] = log_path
+    return outputs
 
 
 def _asset_kind_for_sentinel(name: str) -> str:
@@ -1159,7 +1184,9 @@ def cmd_safe(cmd: list[str]) -> list[str]:
 def write_skip_log(step: Step, args: argparse.Namespace, message: str) -> None:
     logs_dir = log_dir_for_step(step, args)
     logs_dir.mkdir(parents=True, exist_ok=True)
-    (logs_dir / f"{step.name}.log").write_text(message + "\n", encoding="utf-8")
+    log_path = logs_dir / f"{step.name}.log"
+    log_path.write_text(message + "\n", encoding="utf-8")
+    run_manifest.record_step(args.out, name=step.name, status="skipped", outputs={f"{step.name}.log": log_path})
     print(message)
 
 
@@ -1273,6 +1300,12 @@ def _run_steps_once(steps: list[Step], args: argparse.Namespace) -> int:
             continue
         forced = from_index is not None and STEP_ORDER.index(step.name) >= from_index
         if not should_rerun(step, args, forced):
+            run_manifest.record_step(
+                args.out,
+                name=step.name,
+                status="cached",
+                outputs=_step_manifest_outputs(step, args),
+            )
             continue
         returncode = run_step(step, step.build_cmd(args), args)
         if returncode != 0:
@@ -1316,6 +1349,7 @@ def _prefetch_url_inputs(args: argparse.Namespace) -> None:
 
 def pool_main(args: argparse.Namespace) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
+    run_manifest.ensure_manifest(args.out, args=args)
     args.audit = None if args.no_audit else AuditContext.for_run(args.out)
     if args.audit is not None:
         _register_run_inputs(args)
@@ -1326,7 +1360,9 @@ def pool_main(args: argparse.Namespace) -> int:
     # Phase 3 mixed-mode: --dry-run plans the run without invoking executors.
     # Computes step set, builds redacted commands, writes hype.plan.json, exits.
     if getattr(args, "dry_run", False):
-        return _write_dry_run_plan(args)
+        returncode = _write_dry_run_plan(args)
+        run_manifest.finalize_manifest(args.out, status="planned" if returncode == 0 else "failed")
+        return returncode
 
     _prefetch_url_inputs(args)
     steps = [step for step in select_steps(args) if step.name not in set(args.skip)]
@@ -1338,12 +1374,15 @@ def pool_main(args: argparse.Namespace) -> int:
     while True:
         returncode = _run_steps_once(editor_steps, args)
         if returncode != 0:
+            run_manifest.finalize_manifest(args.out, status="failed")
             return returncode
         if not args.render:
+            run_manifest.finalize_manifest(args.out, status="completed")
             return 0
 
         review_path = args.brief_out / "editor_review.json"
         if not review_path.exists():
+            run_manifest.finalize_manifest(args.out, status="completed")
             return 0
         try:
             review = json.loads(review_path.read_text(encoding="utf-8"))
@@ -1366,6 +1405,7 @@ def pool_main(args: argparse.Namespace) -> int:
         elif action == "rework":
             returncode = _run_revise(args, arrangement_path, review_path)
             if returncode != 0:
+                run_manifest.finalize_manifest(args.out, status="failed")
                 return returncode
         else:
             break
@@ -1376,7 +1416,10 @@ def pool_main(args: argparse.Namespace) -> int:
         args.editor_iteration = int(args.editor_iteration) + 1
         args.from_step = "cut"
     if args.render and validate_steps:
-        return _run_steps_once(validate_steps, args)
+        returncode = _run_steps_once(validate_steps, args)
+        run_manifest.finalize_manifest(args.out, status="failed" if returncode else "completed")
+        return returncode
+    run_manifest.finalize_manifest(args.out, status="completed")
     return 0
 
 

@@ -1,0 +1,24 @@
+{
+  "id": "builtin.agent_actions",
+  "name": "Agent Actions",
+  "kind": "built_in",
+  "version": "1.0",
+  "description": "Return and persist machine-readable next actions for an external agent.",
+  "inputs": [
+    {
+      "name": "run_dir",
+      "type": "directory",
+      "description": "ArtAgents run directory containing run.json and generated artifacts."
+    }
+  ],
+  "cache": {
+    "mode": "none"
+  },
+  "isolation": {
+    "mode": "subprocess"
+  },
+  "metadata": {
+    "runtime_module": "artagents.agent_interface",
+    "agent_runtime": "actions"
+  }
+}

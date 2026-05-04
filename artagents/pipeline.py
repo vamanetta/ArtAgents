@@ -65,6 +65,26 @@ def main(argv: list[str] | None = None) -> int:
         from . import audit
 
         return audit.main(raw[1:])
+    if raw and raw[0] == "actions":
+        from . import agent_interface
+
+        return agent_interface.actions_main(raw[1:])
+    if raw and raw[0] == "inspect-run":
+        from . import agent_interface
+
+        return agent_interface.inspect_main(raw[1:])
+    if raw and raw[0] == "review":
+        from . import review
+
+        return review.main(raw[1:])
+    if raw and raw[0] == "revise":
+        from . import revise
+
+        return revise.main(raw[1:])
+    if raw and raw[0] == "rerender":
+        from . import rerender
+
+        return rerender.main(raw[1:])
     if raw and raw[0] == "reigh-data":
         from .packs.builtin.reigh_data import run as reigh_data
 
@@ -103,6 +123,11 @@ Usage:
   python3 -m artagents modalities {list,inspect} ...
   python3 -m artagents reigh-data --project-id PROJECT_ID [--out PATH]
   python3 -m artagents audit --run RUN_DIR
+  python3 -m artagents actions RUN_DIR
+  python3 -m artagents inspect-run RUN_DIR
+  python3 -m artagents review RUN_DIR
+  python3 -m artagents revise RUN_DIR --edits edits.json
+  python3 -m artagents rerender RUN_DIR
   python3 -m artagents --video SRC --brief BRIEF --out runs/name [--render]
   python3 -m artagents --brief BRIEF --out runs/name --target-duration SECONDS [--render]
 Start here:

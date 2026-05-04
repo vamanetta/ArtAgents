@@ -116,6 +116,41 @@ Executor-owned complexity stays in the executor folder, usually under optional l
 
 This classification keeps only retained root and bin launchers; executor-owned public metadata and entrypoints live in canonical executor folders, and orchestrator-owned public metadata and entrypoints live in canonical orchestrator folders.
 
+## Agent Control Layer
+
+Top-level shared libraries that give AI agents structured read/write access to
+pipeline runs. These are not executors — they are libraries consumed by the
+agent executors below and by the CLI aliases (`inspect-run`, `revise`,
+`rerender`, `review`).
+
+| Module | Classification | Notes |
+| --- | --- | --- |
+| `artagents/run_manifest.py` | Shared library | Creates and updates `run.json` — the manifest tracking inputs, steps, artifacts, errors, and available actions. |
+| `artagents/run_context.py` | Shared library | Read-only helpers for locating and reading run artifacts (pool, arrangement, review, timeline, assets, render). |
+| `artagents/agent_interface.py` | Shared library | `inspect_run()` returns machine-readable run state; `available_actions()` returns callable next steps with commands and schemas. |
+| `artagents/edit_actions.py` | Shared library | Structured edit vocabulary (trim, replace_text, change_style, reorder, delete, swap, insert) with validation and application logic. |
+| `artagents/revise.py` | System command | Applies structured edits to an arrangement, moves stale derived outputs to `drafts/`, records the revision. |
+| `artagents/rerender.py` | System command | Reconstructs and re-runs the pipeline from `run.json` inputs. |
+| `artagents/review.py` | System command | Generates a static HTML review workbench for human oversight. |
+
+Agent executors registered under `artagents/packs/builtin/`:
+
+| Executor | Purpose |
+| --- | --- |
+| `builtin.agent_context` | Returns the inspect-run JSON payload via the executor runner. |
+| `builtin.agent_actions` | Writes discoverable actions into `run.json`. |
+| `builtin.apply_edits` | Applies structured edits via the executor runner. |
+| `builtin.rerender` | Resumes the pipeline from cut/render via the executor runner. |
+
+See `docs/agent-loop.md` for the full inspect-edit-render protocol.
+
+## LLM Backend
+
+`artagents/utilities/llm_clients.py` auto-detects the available LLM backend.
+When `ANTHROPIC_API_KEY` is set, Anthropic is used. When only
+`OPENROUTER_API_KEY` is set, all calls route through OpenRouter (any model).
+See `docs/openrouter.md` for details.
+
 ## Structure Enforcement
 
 `python3 -m artagents doctor` fails when canonical repository structure drifts.

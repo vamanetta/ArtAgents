@@ -263,6 +263,15 @@ def _load_api_key(env_file: Path | None, key: str) -> str:
     raise SystemExit(f"{key} not found")
 
 
+def _has_api_key(env_file: Path | None, key: str) -> bool:
+    if os.environ.get(key, "").strip():
+        return True
+    for candidate in _candidate_env_files(env_file):
+        if _read_env_value(candidate, key):
+            return True
+    return False
+
+
 def _is_transient_error(exc: Exception) -> bool:
     message = f"{type(exc).__name__}: {exc}".lower()
     markers = ("timeout", "tempor", "connection", "rate limit", "overloaded", "unavailable", "429", "500", "502", "503", "504")
@@ -270,6 +279,11 @@ def _is_transient_error(exc: Exception) -> bool:
 
 
 def build_claude_client(env_file: Path | None = None) -> ClaudeClient:
+    # Prefer Anthropic when available; fall back to OpenRouter for access
+    # to any model (GPT, Claude, Llama, etc.) via a single API key.
+    if not _has_api_key(env_file, "ANTHROPIC_API_KEY") and _has_api_key(env_file, "OPENROUTER_API_KEY"):
+        return _build_openrouter_client(env_file)
+
     from anthropic import Anthropic
 
     sdk_client = Anthropic(api_key=_load_api_key(env_file, "ANTHROPIC_API_KEY"))
@@ -340,6 +354,116 @@ def build_claude_client(env_file: Path | None = None) -> ClaudeClient:
             raise RuntimeError("Claude request exhausted retries")
 
     return _ClaudeJSONClient()
+
+
+def _build_openrouter_client(env_file: Path | None = None) -> ClaudeClient:
+    from openai import OpenAI
+
+    api_key = _load_api_key(env_file, "OPENROUTER_API_KEY")
+    sdk_client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+
+    class _OpenRouterJSONClient:
+        def complete_json(
+            self,
+            *,
+            model: str,
+            system: str,
+            messages: list[dict[str, Any]],
+            response_schema: dict[str, Any],
+            max_tokens: int,
+        ) -> dict[str, Any]:
+            oai_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+            for msg in messages:
+                content = msg.get("content")
+                if isinstance(content, list):
+                    parts: list[dict[str, Any]] = []
+                    for block in content:
+                        if not isinstance(block, dict):
+                            parts.append({"type": "text", "text": str(block)})
+                            continue
+                        if block.get("type") == "text":
+                            parts.append({"type": "text", "text": block.get("text", "")})
+                        elif block.get("type") == "image":
+                            source = block.get("source", {})
+                            if source.get("type") == "base64":
+                                media_type = source.get("media_type", "image/jpeg")
+                                data = source.get("data", "")
+                                parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{media_type};base64,{data}"},
+                                })
+                            elif source.get("type") == "url":
+                                parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": source.get("url", "")},
+                                })
+                        else:
+                            parts.append({"type": "text", "text": str(block)})
+                    oai_messages.append({"role": msg.get("role", "user"), "content": parts})
+                else:
+                    oai_messages.append({"role": msg.get("role", "user"), "content": content})
+
+            debug_context = _start_debug_log(
+                "openrouter",
+                {
+                    "model": model,
+                    "system": system,
+                    "messages": messages,
+                    "response_schema": response_schema,
+                    "max_tokens": max_tokens,
+                },
+            )
+            for attempt in range(2):
+                try:
+                    response = sdk_client.chat.completions.create(
+                        model=model,
+                        messages=oai_messages,
+                        max_tokens=max_tokens,
+                        tools=[{
+                            "type": "function",
+                            "function": {
+                                "name": "return_json",
+                                "description": "Return the requested JSON payload.",
+                                "parameters": response_schema,
+                            },
+                        }],
+                        tool_choice={"type": "function", "function": {"name": "return_json"}},
+                    )
+                    choice = response.choices[0] if response.choices else None
+                    if choice and choice.message and choice.message.tool_calls:
+                        raw = choice.message.tool_calls[0].function.arguments
+                        payload = json.loads(raw)
+                        _finish_debug_log(
+                            debug_context,
+                            provider="openrouter",
+                            model=model,
+                            status="ok",
+                            payload={
+                                "attempt": attempt + 1,
+                                "sdk_response": _jsonable(response),
+                                "parsed_payload": payload,
+                            },
+                        )
+                        return payload
+                    raise RuntimeError("OpenRouter response did not include a function call")
+                except Exception as exc:
+                    if attempt == 1 or not _is_transient_error(exc):
+                        _finish_debug_log(
+                            debug_context,
+                            provider="openrouter",
+                            model=model,
+                            status="error",
+                            payload={
+                                "attempt": attempt + 1,
+                                "error": f"{type(exc).__name__}: {exc}",
+                            },
+                        )
+                    if attempt == 1 or not _is_transient_error(exc):
+                        raise
+                    time.sleep(1.0)
+            raise RuntimeError("OpenRouter request exhausted retries")
+
+    return _OpenRouterJSONClient()
 
 
 def _sanitize_gemini_schema(node: Any) -> Any:

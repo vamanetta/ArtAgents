@@ -93,8 +93,8 @@ class CompositionElementTest(unittest.TestCase):
         package_src = WORKSPACE / "packages" / "timeline-composition" / "typescript" / "src"
         source = (package_src / "TimelineComposition.tsx").read_text(encoding="utf-8")
         self.assertIn("TimelineCompositionProps", source)
-        self.assertIn("getTimelineDurationInFrames", source)
-        self.assertIn("export default TimelineComposition", source)
+        self.assertIn("getClipDurationInFrames", source)
+        self.assertIn("export const TimelineComposition", source)
 
 
 if __name__ == "__main__":
